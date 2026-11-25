@@ -175,6 +175,10 @@ main { display: grid; grid-template-columns: var(--panel-w) minmax(0, 1fr); min-
 .mapwrap { position: relative; min-height: 0; min-width: 0; background: var(--sea); overflow: hidden; }
 svg#map { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 svg#map:active { cursor: grabbing; }
+/* Cooperative gestures (embedded): one finger / plain wheel scroll the page */
+.coop svg#map { touch-action: pan-x pan-y; }
+.coop-hint { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.42); color: #fff; font-weight: 600; font-size: 19px; text-align: center; text-wrap: balance; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.coop-hint.on { opacity: 1; }
 .cty { fill: var(--land); stroke: var(--land-line); stroke-width: .5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .world .cty.m { fill: var(--member); cursor: pointer; transition: fill .15s; }
 .world .cty.m:hover, .world .cty.m.hov { fill: var(--member-hover); }
@@ -480,6 +484,43 @@ let projection, path, curT = d3.zoomIdentity, W = 0, H = 0;
 
 const zoom = d3.zoom().on("zoom", ev => { curT = ev.transform; gRoot.attr("transform", curT); styleMarks(); hideTip(); });
 svg.call(zoom).on("dblclick.zoom", null);
+/* Cooperative gestures when embedded (iframe): wheel zooms only with Ctrl/⌘, touch moves/zooms only with two fingers.
+   ?coop=1 forces it on, ?coop=0 turns it off. */
+(() => {
+  const qp = new URLSearchParams(location.search).get("coop");
+  let embedded = true; try { embedded = window.self !== window.top; } catch (e) {}
+  if (!(qp === "1" || (qp !== "0" && embedded))) return;
+  document.documentElement.classList.add("coop");
+  const mac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+  const key = mac ? "⌘" : (/^de/.test(LANG) ? "Strg" : "Ctrl");
+  const H = {
+    en: ["Use {k} + scroll to zoom the map", "Use two fingers to move the map"],
+    de: ["{k} + Scrollen zum Zoomen der Karte", "Zum Bewegen der Karte zwei Finger verwenden"],
+    fr: ["Utilisez {k} + molette pour zoomer", "Utilisez deux doigts pour déplacer la carte"],
+    es: ["Usa {k} + desplazamiento para hacer zoom", "Usa dos dedos para mover el mapa"],
+    it: ["Usa {k} + scorrimento per lo zoom", "Usa due dita per spostare la mappa"],
+    pt: ["Use {k} + rolagem para ampliar", "Use dois dedos para mover o mapa"],
+    nl: ["Gebruik {k} + scrollen om te zoomen", "Gebruik twee vingers om de kaart te verplaatsen"],
+    pl: ["Użyj {k} + przewijania, aby powiększyć", "Użyj dwóch palców, aby przesunąć mapę"],
+    tr: ["Yakınlaştırmak için {k} + kaydırma kullanın", "Haritayı hareket ettirmek için iki parmak kullanın"]
+  };
+  const msg = i => ((H[String(LANG).slice(0, 2)] || H.en)[i]).replace("{k}", key);
+  const wrapEl = document.getElementById("mapwrap");
+  const hint = document.createElement("div");
+  hint.className = "coop-hint"; hint.setAttribute("aria-hidden", "true");
+  wrapEl.appendChild(hint);
+  let ht, active = false;
+  const show = i => { hint.textContent = msg(i); hint.classList.add("on"); clearTimeout(ht); ht = setTimeout(() => hint.classList.remove("on"), 1400); };
+  zoom.filter(ev => {
+    if (ev.type === "wheel") { if (ev.ctrlKey || ev.metaKey) return true; show(0); return false; }
+    if (ev.type.startsWith("touch")) return ev.touches.length >= 2;
+    return !ev.ctrlKey && !ev.button;
+  });
+  /* Ctrl + mouse wheel: normal speed; trackpad pinch (small ctrl deltas) stays responsive */
+  zoom.wheelDelta(ev => -ev.deltaY * (ev.deltaMode === 1 ? 0.05 : ev.deltaMode ? 1 : 0.002) * (ev.ctrlKey && Math.abs(ev.deltaY) < 50 ? 10 : 1));
+  zoom.on("start.coop", () => { active = true; hint.classList.remove("on"); }).on("end.coop", () => { active = false; });
+  svg.on("touchmove.coop", ev => { if (!active && ev.touches.length === 1) show(1); }, { passive: true });
+})();
 
 function render() {
   W = wrap.clientWidth; H = wrap.clientHeight;
